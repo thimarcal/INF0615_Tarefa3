@@ -5,20 +5,13 @@
 ########################################################################
 
 set.seed(42)
-setwd("/Users/thiagom/Documents/Studies/Unicamp/MDC/INF-615/Tarefas/INF0615_Tarefa3/")
-#setwd("C:\\Users\\rafaelr\\Documents\\INF015\\Tarefa3\\INF0615_Tarefa3")
+#setwd("/Users/thiagom/Documents/Studies/Unicamp/MDC/INF-615/Tarefas/INF0615_Tarefa3/")
+setwd("C:\\Users\\rafaelr\\Documents\\INF015\\Tarefa3\\INF0615_Tarefa3")
 
 # Reading data
 train_data <- read.csv("student_performance_train.data", header = TRUE)
 val_data<- read.csv("student_performance_val.data", header = TRUE)
 test_data<- read.csv("student_performance_test.data", header = TRUE)
-
-dim(train_data)
-summary(train_data)
-dim(val_data)
-summary(val_data)
-dim(test_data)
-summary(test_data)
 
 # Predict data using model and evaluate
 predictAndEvaluate <- function(model, data){
@@ -26,6 +19,23 @@ predictAndEvaluate <- function(model, data){
   prediction = as.numeric(prediction[,2] >= 0.5)
   prediction[prediction==0] = "0"
   prediction[prediction==1] = "1"
+  
+  CM = as.matrix(table(Actual = data$approved, Predicted = prediction))
+  
+  if (dim(CM)[2] == 1) {
+    CM <- cbind(CM, c(0,0))
+  }
+  
+  TPR = CM[2,2] / (CM[2,2] + CM[2,1])
+  TNR = CM[1,1] / (CM[1,1] + CM[1,2])
+  ACCNorm = mean(c(TPR, TNR))
+  
+  return(list(CM=CM, ACCNorm=ACCNorm))
+}
+
+# Predict data using model and evaluate
+predictAndEvaluateRF <- function(model, data){
+  prediction = predict(model, data)
   
   CM = as.matrix(table(Actual = data$approved, Predicted = prediction))
   
@@ -61,6 +71,13 @@ train_data <- data.convert(train_data)
 val_data <- data.convert(val_data)
 test_data <- data.convert(test_data)
 
+dim(train_data)
+summary(train_data)
+dim(val_data)
+summary(val_data)
+dim(test_data)
+summary(test_data)
+
 #baseline tree
 library(rpart)
 treeModel <- rpart(formula = "approved ~.", data=train_data, parms = list(split="information"), method = "class")
@@ -78,11 +95,11 @@ post(treeModel, file = "tree.ps",title = "Classification Tree for Income")
 
 
 #Tree using Gini
-treeModelGini <- rpart(formula = "approved ~.", data=train_data, parms = list(split="information"), method = "class")
+treeModelGini <- rpart(formula = "approved ~.", data=train_data, parms = list(split="gini"), method = "class")
 predictAndEvaluate(treeModelGini, train_data) # 0,7797283
 predictAndEvaluate(treeModelGini, val_data) # 0,7034085
 
-summary(treeModelGini)
+#summary(treeModelGini)
 printcp(treeModelGini)
 
 plot(treeModelGini, uniform=TRUE)
@@ -104,7 +121,7 @@ printcp(treeModelGrow)
 
 plot(treeModelGrow$cptable[,4])
 
-summary(treeModelGrow)
+#summary(treeModelGrow)
 printcp(treeModelGrow)
 
 plot(treeModelGrow, uniform=TRUE)
@@ -120,7 +137,7 @@ post(treeModelGrow, file = "treeGrow.ps",title = "Classification Tree for Income
 minCP = treeModelGrow$cptable[which.min(treeModelGrow$cptable[,"xerror"]),"CP"]
 
 ptree = prune(treeModelGrow, cp=minCP)
-summary(ptree)
+#summary(ptree)
 
 #Plot the pruned tree
 plot(ptree, uniform=TRUE)
@@ -136,53 +153,63 @@ predictAndEvaluate(ptree, val_data) # 0,680273
 library(randomForest)
 
 ###### PLOT ACCNorm for nTree
-nTree <- c(5, 10,25, 50, 100, 500)
-accPerNTree <- data.frame(ntree=numeric(6), accTrain=numeric(6) , accVal=numeric(6))
-for (i in 1:6){
-  #formula <- approved ~ failures+higher+school+freetime+schoolsup+Walc+Fedu+age+famrel+Mjob+reason+health
+nTree <- c(1, 5, 10,25, 50, 100, 500)
+accPerNTree <- data.frame(ntree=numeric(7), accTrain=numeric(7) , accVal=numeric(7))
+for (i in 1:7){
+  #formula <- approved ~ failures+higher+school+Fedu+Medu+schoolsup+Dalc+reason+address
   formula <- approved ~ .
-  rfModel <- randomForest(formula=formula, data= train_data, ntree=nTree[i])
-  print(summary(rfModel))
-  rfPrediction <- predict(rfModel, train_data) 
-  rfCM <- as.matrix(table(Actual = train_data$approved, Predicted = rfPrediction))
-  rfTPR <- rfCM[2,2] / (rfCM[2,2] + rfCM[2,1])
-  rfTNR <- rfCM[1,1] / (rfCM[1,1] + rfCM[1,2])
-  rfACCNormT <- mean(c(rfTPR, rfTNR))
+  rfModel <- randomForest(formula=formula, data= train_data, ntree=nTree[i], importance=TRUE,
+                          proximity=TRUE, replace = TRUE)
   
-  rfPrediction <- predict(rfModel, val_data) 
-  rfCM <- as.matrix(table(Actual = val_data$approved, Predicted = rfPrediction))
-  rfTPR <-rfCM[2,2] / (rfCM[2,2] + rfCM[2,1])
-  rfTNR <- rfCM[1,1] / (rfCM[1,1] + rfCM[1,2])
-  rfACCNormV <- mean(c(rfTPR, rfTNR))
+  rfACCNormT <- predictAndEvaluateRF(rfModel, train_data) 
+  rfACCNormV <- predictAndEvaluateRF(rfModel, val_data) 
   
-  accPerNTree[i,] <- c(nTree[i], rfACCNormT, rfACCNormV)
+  accPerNTree[i,] <- c(nTree[i], rfACCNormT$ACCNorm, rfACCNormV$ACCNorm)
 }
 accPerNTree
+g <- ggplot(accPerNTree, aes(ntree)) +
+  geom_line(aes(y=accTrain,colour="Train")) +
+  geom_line(aes(y=accVal, colour="Val")) +
+  scale_color_manual(breaks= c("Train", "Val"), values = c("blue", "green")) +
+  xlab("Numero de Arvores") +
+  ylab("Acuracia") +
+  labs(title="Random Forest Test")
+g
+accPerNTree
 ###################################
-#   ntree  accTrain    accVal
-#1     5 0.9376328 0.6746839
-#2    10 0.9534007 0.6130200
-#3    25 0.9742851 0.6611233
-#4    50 0.9838031 0.6651090
-#5   100 0.9872855 0.6321697
-#6   500 0.9886336 0.6461884
+#  ntree  accTrain    accVal
+#1     1 0.8415952 0.5990013
+#2     5 0.9326593 0.6214495
+#3    10 0.9600797 0.6312534
+#4    25 0.9744281 0.6513194
+#5    50 0.9872855 0.6225948
+#6   100 0.9869996 0.6448140
+#7   500 0.9872141 0.6263515
 ###################################
 
 # test bagging
 library(ipred)
-bagModel <- bagging(formula = approved ~ ., data = train_data, coob = TRUE)
-summary(bagModel)
-rfPrediction <- predict(bagModel, train_data) 
-rfCM <- as.matrix(table(Actual = train_data$approved, Predicted = rfPrediction))
-rfTPR <- rfCM[2,2] / (rfCM[2,2] + rfCM[2,1])
-rfTNR <- rfCM[1,1] / (rfCM[1,1] + rfCM[1,2])
-rfACCNormT <- mean(c(rfTPR, rfTNR)) # 0,984989
-
-rfPrediction <- predict(bagModel, val_data) 
-rfCM <- as.matrix(table(Actual = val_data$approved, Predicted = rfPrediction))
-rfTPR <-rfCM[2,2] / (rfCM[2,2] + rfCM[2,1])
-rfTNR <- rfCM[1,1] / (rfCM[1,1] + rfCM[1,2])
-rfACCNormV <- mean(c(rfTPR, rfTNR)) # 0,656450
+nBag <- c(10,25, 50, 100)
+accPerNBag <- data.frame(ntree=numeric(4), accTrain=numeric(4) , accVal=numeric(4))
+for (i in 1:4){
+  bagModel <- bagging(formula = approved ~ ., data = train_data, nbagg=nBag[i], coob = TRUE, control = rpart.control(minsplit=10))
+  #summary(bagModel)
+  rfACCNormT <- predictAndEvaluateRF(rfModel, train_data) 
+  rfACCNormV <- predictAndEvaluateRF(rfModel, val_data)
+  rfACCNormT
+  rfACCNormV
+  
+  accPerNBag[i,] <- c(nBag[i], rfACCNormT$ACCNorm, rfACCNormV$ACCNorm)
+}
+accPerNBag
+g <- ggplot(accPerNBag, aes(ntree)) +
+  geom_line(aes(y=accTrain,colour="Train")) +
+  geom_line(aes(y=accVal, colour="Val")) +
+  scale_color_manual(breaks= c("Train", "Val"), values = c("blue", "green")) +
+  xlab("Numero de Arvores") +
+  ylab("Acuracia") +
+  labs(title="Bagging Test")
+g
 
 
 #################################################################################################
@@ -204,16 +231,22 @@ rfACCNormV <- mean(c(rfTPR, rfTNR)) # 0,656450
 
 # As the tested results were not better, we decided to use it as is.
 
-accPerNTree <- data.frame(ntree=numeric(6), accTrain=numeric(6) , accVal=numeric(6))
+# pplot better RF model
+rfModel <- randomForest(formula=formula, data= train_data, ntree=10, importance=TRUE,
+                        proximity=TRUE, replace = TRUE)
+plot(rfModel, log = "y")
+varImpPlot(rfModel)
 
-formula <- approved ~ . 
-rfModel <- randomForest(formula=formula, data= train_data, ntree=50)
-print(summary(rfModel))
+predictAndEvaluateRF(rfModel, train_data)#0.958
+predictAndEvaluateRF(rfModel, val_data)  #0.713
+predictAndEvaluateRF(rfModel, test_data) #0.664
 
-rfPrediction <- predict(rfModel, test_data) 
-rfCM <- as.matrix(table(Actual = test_data$approved, Predicted = rfPrediction))
-rfTPR <-rfCM[2,2] / (rfCM[2,2] + rfCM[2,1])
-rfTNR <- rfCM[1,1] / (rfCM[1,1] + rfCM[1,2])
-rfACCNormTest <- mean(c(rfTPR, rfTNR))
-rfACCNormTest # 0.6779824
+formula <- "approved ~ failures+higher+Fedu+reason+schoolsup+paid+school+freetime+famrel+Walc"
+treeModel <- rpart(formula = formula, data=train_data, parms = list(split="gini"), method = "class")
+predictAndEvaluate(treeModel, train_data)#0.774
+predictAndEvaluate(treeModel, val_data)  #0.715
+predictAndEvaluate(treeModel, test_data) #0.667
+
+plot(treeModel, uniform=TRUE)
+text(treeModel, use.n=TRUE, all=TRUE, cex=.8)
 
